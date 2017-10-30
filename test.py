@@ -10,12 +10,12 @@ from PyQt5.QtCore import pyqtSignal, QUrl, QObject, QSettings
 import requests
 
 
-instance_host = "http://mastodev.local:3000"
-secrets = {
-    "client_id": "bf147bbe4e4c1e42254513d70f53637688cd6ae88185c24d4c46765a48014967",
-    "client_secret": "f9456f96fbfac4de7716e6b52cfdc7b0e344bc1a4f94af14d1fd8204d3dbf969",
-    "access_token": "0506a19ecccfc69f039bda916bf0cc73392848c8986deb90eec4ceb3a7887747",
-}
+# instance_host = "http://mastodev.local:3000"
+# secrets = {
+#     "client_id": "bf147bbe4e4c1e42254513d70f53637688cd6ae88185c24d4c46765a48014967",
+#     "client_secret": "f9456f96fbfac4de7716e6b52cfdc7b0e344bc1a4f94af14d1fd8204d3dbf969",
+#     "access_token": "0506a19ecccfc69f039bda916bf0cc73392848c8986deb90eec4ceb3a7887747",
+# }
 
 def prettydate(d):
     diff = datetime.datetime.utcnow() - d
@@ -63,10 +63,14 @@ class Controller(QObject):
     def configure_view(self):
         pass
 
+    def view_added(self):
+        pass
+
     def register_view(self):
         self.view = self.initialize_view()
         self.configure_view()
         self.view_window_index = self.app.window.add_view(self.view)
+        self.view_added()
 
 
 class View(QtWidgets.QWidget):
@@ -89,6 +93,7 @@ class DataManager(QObject):
         self.client_id = ''
         self.client_secret = ''
         self.access_token = ''
+        self.refresh_token = ''
 
     def load_settings(self):
         self._settings = QSettings("NixieCraft", "TootApp")
@@ -97,6 +102,16 @@ class DataManager(QObject):
         self.client_id = self._settings.value("core/client_id", "")
         self.client_secret = self._settings.value("core/client_secret", "")
         self.access_token = self._settings.value("core/access_token", "")
+        self.refresh_token = self._settings.value("core/refresh_token", "")
+
+        if self.access_token:
+            self.mastodon = Mastodon(self.client_id, client_secret=self.client_secret, access_token=self.access_token, api_base_url=self.instance_host)
+
+    def save_settings(self):
+        self._settings.setValue("core/instance_host", self.instance_host)
+        self._settings.setValue("core/client_id", self.client_id)
+        self._settings.setValue("core/client_secret", self.client_secret)
+        self._settings.setValue("core/access_token", self.access_token)
 
     def register_instance(self, instance_host):
         self.instance_host = instance_host
@@ -108,14 +123,27 @@ class DataManager(QObject):
 
         self.client_id = client_id
         self.client_secret = client_secret
+        self.mastodon = Mastodon(self.client_id, client_secret=self.client_secret, api_base_url=self.instance_host)
 
-        # XXX Need to define access token on Mastodon object.....
-        self.mastodon = Mastodon(self.client_id, client_secret=self.client_secret, api_base_url=instance_host)
-        import ipdb ; ipdb.set_trace()
+        self.save_settings()
+
         return True
+
+    def set_refresh_token(self, refresh_token):
+        self.refresh_token = refresh_token
+        # self.mastodon = Mastodon(self.client_id, client_secret=self.client_secret, access_token=self.access_token, api_base_url=self.instance_host)
+
+        self.save_settings()
+
+    def login(self):
+        self.access_token = self.mastodon.log_in(code=self.refresh_token)
+        self.mastodon = Mastodon(self.client_id, client_secret=self.client_secret, access_token=self.access_token, api_base_url=self.instance_host)
+
+        self.save_settings()
 
     def get_auth_request_url(self):
         return self.mastodon.auth_request_url(client_id=self.client_id)
+
 
 class ClickableLabel(QtWidgets.QLabel):
     clicked = pyqtSignal()
@@ -199,8 +227,8 @@ class Toot(QtWidgets.QWidget):
 
 
 class Timeline(LayoutView):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
         self.initialize_ui()
 
@@ -270,12 +298,27 @@ class AuthController(Controller):
     def on_login_clicked(self, instance_host):
         if self.app.data.register_instance(instance_host):
             # We're connected to the instance, display login window
-            login_window = LoginWindow(self.app.data.get_auth_request_url())
-            login_window.on_authenticated.connect(self.user_logged_in)
-            login_window.show()
+            self._login_window = LoginWindow(self.app.data.get_auth_request_url())
+            self._login_window.on_authenticated.connect(self.user_logged_in)
+            self._login_window.show()
 
-    def user_logged_in(self, access_token):
-        self.app.data.access_token = access_token
+    def user_logged_in(self, refresh_token):
+        self.app.data.set_refresh_token(refresh_token)
+        self.app.data.login()
+
+        self.app.router.route_to("timelines/home")
+
+
+class TimelineController(Controller):
+    view_class = Timeline
+
+    def view_added(self):
+        try:
+            # print(m.account_verify_credentials())
+            self.view.update_list(self.app.data.mastodon.timeline_home())
+        except MastodonAPIError as e:
+            print("error " + e.__str__())
+
 
 class Window(QtWidgets.QWidget):
     def __init__(self):
@@ -335,7 +378,6 @@ class LoginWindow(QtWidgets.QWidget):
         # is the filename in the url a sha hash?
         r = re.compile(r"^[0-9a-f]{64}$")
         if r.search(filename):
-            print("Received access token: " + filename)
             self.on_authenticated.emit(filename)
             self.close()
 
@@ -391,15 +433,14 @@ class Application(QObject):
         if not self.data.access_token:
             self.router.route_to("login")
         else:
-            # TODO: Go straight to timeline if we have an access_token
-            pass
+            self.router.route_to("timelines/home")
 
         self.window.show()
         sys.exit(self.app.exec_())
 
     def register_routes(self):
         self.router.register_route("login", AuthController)
-        self.router.register_route("timelines/home", Timeline)
+        self.router.register_route("timelines/home", TimelineController)
         self.router.register_route("timelines/local", Timeline)
         self.router.register_route("timelines/federation", Timeline)
         self.router.register_route("notifications", Timeline)
