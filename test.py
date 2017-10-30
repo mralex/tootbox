@@ -111,7 +111,7 @@ class DataManager(QObject):
 
         # XXX Need to define access token on Mastodon object.....
         self.mastodon = Mastodon(self.client_id, client_secret=self.client_secret, api_base_url=instance_host)
-
+        import ipdb ; ipdb.set_trace()
         return True
 
     def get_auth_request_url(self):
