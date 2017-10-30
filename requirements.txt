@@ -1,0 +1,5 @@
+PyQt5==5.9
+sip==4.19.3
+Mastodon.py==1.1.1
+
+ipdb==0.10.3
