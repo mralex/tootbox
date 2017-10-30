@@ -1,6 +1,6 @@
 # TootBox
 
-A desktop Mastodon client. Currently extremely early in development, but it'll connect to an instance and download the home timeline.
+A desktop Mastodon client. Currently extremely early in development, but it'll connect to an instance and download the home timeline for your user.
 
 ## Running
 
@@ -13,6 +13,7 @@ Tootbox uses PyQt5, and requires the installation of at least Qt5.9 for your ope
 ### Step 2: Run tootbox
 `python -m tootbox`
 
+TODO: Installer scripts, and convenient boot scripts
 
 ## License
 Liberally licensed under MIT, see LICENSE.md
